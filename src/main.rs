@@ -1,7 +1,6 @@
 use prost::Message;
 use prost_reflect::ReflectMessage;
 use std::collections::BTreeMap;
-use std::ops::Deref;
 use std::str;
 use vrl::prelude::NotNan;
 
@@ -32,11 +31,13 @@ fn to_vrl(prost_reflect_value: prost_reflect::Value) -> vrl::value::Value {
         prost_reflect::Value::String(v) => vrl::value::Value::from(v),
         prost_reflect::Value::Bytes(v) => vrl::value::Value::from(v),
         prost_reflect::Value::EnumNumber(v) => vrl::value::Value::from(v), // TODO: maybe enum value should the string value
-        prost_reflect::Value::Message(v) => {
+        prost_reflect::Value::Message(mut v) => {
             let mut obj_map = BTreeMap::new();
             for field_desc in v.descriptor().fields() {
-                let field = v.get_field(&field_desc);
-                let out = to_vrl(field.deref().clone());
+                let field = v.get_field_mut(&field_desc);
+                let mut taken_value = prost_reflect::Value::Bool(false);
+                std::mem::swap(&mut taken_value, field);
+                let out = to_vrl(taken_value);
                 obj_map.insert(field_desc.name().to_string(), out);
             }
             vrl::value::Value::from(obj_map)
