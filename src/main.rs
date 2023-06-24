@@ -3,6 +3,7 @@ use prost_reflect::ReflectMessage;
 use std::collections::BTreeMap;
 use std::str;
 use vrl::prelude::NotNan;
+pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 // Include the `test_protobuf` module, which is generated from items.proto.
 pub mod test_protobuf {
@@ -17,17 +18,19 @@ pub fn serialize_person(person: &test_protobuf::Person) -> Vec<u8> {
     buf
 }
 
-fn to_vrl(prost_reflect_value: prost_reflect::Value) -> vrl::value::Value {
-    match prost_reflect_value {
+fn to_vrl(prost_reflect_value: prost_reflect::Value) -> Result<vrl::value::Value, Error> {
+    let v = match prost_reflect_value {
         prost_reflect::Value::Bool(v) => vrl::value::Value::from(v),
         prost_reflect::Value::I32(v) => vrl::value::Value::from(v),
         prost_reflect::Value::I64(v) => vrl::value::Value::from(v),
         prost_reflect::Value::U32(v) => vrl::value::Value::from(v),
         prost_reflect::Value::U64(v) => vrl::value::Value::from(v),
-        prost_reflect::Value::F32(v) => {
-            vrl::value::Value::Float(NotNan::new(f64::from(v)).unwrap()) // TODO: handle nan
-        }
-        prost_reflect::Value::F64(v) => vrl::value::Value::Float(NotNan::new(v).unwrap()), // TODO: handle nan
+        prost_reflect::Value::F32(v) => vrl::value::Value::Float(
+            NotNan::new(f64::from(v)).map_err(|_e| format!("Float number cannot be Nan"))?,
+        ),
+        prost_reflect::Value::F64(v) => vrl::value::Value::Float(
+            NotNan::new(v).map_err(|_e| format!("F64 number cannot be Nan"))?,
+        ),
         prost_reflect::Value::String(v) => vrl::value::Value::from(v),
         prost_reflect::Value::Bytes(v) => vrl::value::Value::from(v),
         prost_reflect::Value::EnumNumber(v) => vrl::value::Value::from(v), // TODO: maybe enum value should the string value
@@ -37,20 +40,26 @@ fn to_vrl(prost_reflect_value: prost_reflect::Value) -> vrl::value::Value {
                 let field = v.get_field_mut(&field_desc);
                 let mut taken_value = prost_reflect::Value::Bool(false);
                 std::mem::swap(&mut taken_value, field);
-                let out = to_vrl(taken_value);
+                let out = to_vrl(taken_value)?;
                 obj_map.insert(field_desc.name().to_string(), out);
             }
             vrl::value::Value::from(obj_map)
         }
         prost_reflect::Value::List(v) => {
-            vrl::value::Value::from(v.into_iter().map(|o| to_vrl(o)).collect::<Vec<_>>())
+            let vec = v
+                .into_iter()
+                .map(|o| to_vrl(o))
+                .collect::<Result<Vec<_>, Error>>()?;
+            vrl::value::Value::from(vec)
         }
         prost_reflect::Value::Map(v) => vrl::value::Value::from(
             v.into_iter()
-                .map(|kv| (kv.0.as_str().unwrap().to_string(), to_vrl(kv.1)))
+                // TODO: handle unwrap
+                .map(|kv| (kv.0.as_str().unwrap().to_string(), to_vrl(kv.1).unwrap()))
                 .collect::<BTreeMap<String, _>>(),
         ),
-    }
+    };
+    Ok(v)
 }
 
 fn main() {
